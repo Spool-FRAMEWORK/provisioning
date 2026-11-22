@@ -73,8 +73,10 @@ What each type gives is in the catalogue of adapters of `spool-infrastructure`.
   ones in its `uses`, or the only one of each kind. The service that assumes the roles is the variable
   `module_role_service`, `ecs-tasks.amazonaws.com` by default.
 - **Container names and images are variables.** `localstack_container_name`, `kafka_container_name`,
-  `localstack_image` and `kafka_image` have defaults, so a machine that already runs a `spool-localstack` can apply
-  next to it.
+  `localstack_image`, `kafka_image` and `postgres_image` have defaults, and so does `<piece>_container_name` of each
+  `POSTGRESQL` store, `spool-<piece>`, so a machine that already runs a `spool-localstack` can apply next to it.
+- **A password is never written.** A `POSTGRESQL` store of envelope headers takes its `password` as `${env:NAME}`;
+  written in the descriptor, or missing, it stops the generation.
 - **The state is local** by default, in the folder where Terraform runs. A remote backend is for whoever deploys to set.
 
 ---
@@ -83,5 +85,5 @@ What each type gives is in the catalogue of adapters of `spool-infrastructure`.
 
 The scenarios use plugins that exist only in the tests. `TerraformValidateTest` and `TerraformApplyTest` run Terraform
 itself (tag `terraform`; the apply also needs Docker, tag `docker`): they look for it in `TERRAFORM_BINARY` or on the
-path, and without it they are skipped. The apply uses containers of its own (`spool-tf-*`, ports 4576 and 9192) and
-destroys them at the end.
+path, and without it they are skipped. The apply uses containers of its own (`spool-tf-*`, ports 4576, 9192 and 5442)
+and destroys them at the end.
