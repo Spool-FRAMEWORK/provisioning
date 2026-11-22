@@ -1,6 +1,6 @@
 # Spool — Provisioning
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
+[![License](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange.svg)](https://openjdk.org/)
 
 **Provisioning** generates the Terraform of the infrastructure of a **Spool** descriptor, for a local target (Docker
