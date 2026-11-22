@@ -1,0 +1,9 @@
+name: Deploy Javadoc → GitHub Pages
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+jobs:
+  deploy-docs:
+    uses: Spool-FRAMEWORK/.github/.github/workflows/reusable-javadoc-pages.yml@main
+    secrets: inherit
