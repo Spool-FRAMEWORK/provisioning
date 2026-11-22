@@ -21,6 +21,10 @@ import java.net.ServerSocket;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -37,10 +41,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class TerraformApplyTest {
     private static final int LOCALSTACK_PORT = 4576;
     private static final int KAFKA_PORT = 9192;
+    private static final int POSTGRES_PORT = 5442;
+    private static final String HEADERS_PASSWORD = "spool-tf-password";
+    private static final String HEADERS_URL = "jdbc:postgresql://localhost:" + POSTGRES_PORT + "/spool";
     private static final String ENDPOINT = "http://localhost:" + LOCALSTACK_PORT;
     private static final String REGION = "eu-west-1";
     private static final String[] OWN_CONTAINERS = {
-            "-var=localstack_container_name=spool-tf-localstack", "-var=kafka_container_name=spool-tf-kafka"};
+            "-var=localstack_container_name=spool-tf-localstack", "-var=kafka_container_name=spool-tf-kafka",
+            "-var=headers_container_name=spool-tf-postgres", "-var=SPOOL_TF_HEADERS_PASSWORD=" + HEADERS_PASSWORD};
 
     @TempDir
     Path folder;
@@ -53,16 +61,10 @@ class TerraformApplyTest {
     void apply_bringsThePiecesUpAndANodeStartsAgainstThem() throws Exception {
         terraform = TerraformCli.installed().orElse(null);
         Assumptions.assumeTrue(terraform != null, "Terraform not installed: set TERRAFORM_BINARY or put terraform on the path");
-        Path descriptor = Files.writeString(folder.resolve("Spool.yaml"), """
-                server: {port: %d}
-                infrastructure:
-                  bus: {kind: EVENT_BUS, type: KAFKA, configuration: {bootstrap.servers: "localhost:%d"}}
-                  inbox: {kind: INBOX, type: S3, configuration: {bucket: spool-tf-inbox, region: %s, endpoint: "%s"}}
-                  lake: {kind: DATA_LAKE, type: S3, configuration: {bucket: spool-tf-lake, region: %s, endpoint: "%s"}}
-                modules:
-                  - ingester: {type: REACTIVE, id: orders-ingester}
-                """.formatted(freePort(), KAFKA_PORT, REGION, ENDPOINT, REGION, ENDPOINT));
-        out = TerraformGenerator.fromFileSystem().generate(descriptor, Optional.empty(), ProvisioningTarget.LOCAL)
+        int nodePort = freePort();
+        Path generated = Files.writeString(folder.resolve("Spool.yaml"), descriptor(nodePort, "${env:SPOOL_TF_HEADERS_PASSWORD}"));
+        Path descriptor = Files.writeString(folder.resolve("Node.spool.yaml"), descriptor(nodePort, HEADERS_PASSWORD));
+        out = TerraformGenerator.fromFileSystem().generate(generated, Optional.empty(), ProvisioningTarget.LOCAL)
                 .writeTo(folder.resolve("tf"));
 
         terraform.run(out, "init", "-input=false");
@@ -77,12 +79,37 @@ class TerraformApplyTest {
         try (Admin kafka = Admin.create(Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:" + KAFKA_PORT))) {
             assertThat(kafka.describeCluster().nodes().get(1, TimeUnit.MINUTES)).isNotEmpty();
         }
+        assertThat(tableOfTheHeadersExists()).isTrue();
     }
 
     @AfterEach
     void destroy() throws Exception {
         node.ifPresent(SpoolNode::stop);
         if (out != null) terraform.run(out, withOwnContainers("destroy", "-auto-approve", "-input=false"));
+    }
+
+    /** The node's descriptor and the one Terraform is generated from differ only in where the password comes from. */
+    private static String descriptor(int nodePort, String headersPassword) {
+        return """
+                server: {port: %d}
+                infrastructure:
+                  bus: {kind: EVENT_BUS, type: KAFKA, configuration: {bootstrap.servers: "localhost:%d"}}
+                  inbox: {kind: INBOX, type: S3, configuration: {bucket: spool-tf-inbox, region: %s, endpoint: "%s"}}
+                  lake: {kind: DATA_LAKE, type: S3, configuration: {bucket: spool-tf-lake, region: %s, endpoint: "%s"}}
+                  headers: {kind: ENVELOPE_HEADERS, type: POSTGRESQL, configuration: {url: "%s", user: spool, password: "%s"}}
+                modules:
+                  - ingester: {type: REACTIVE, id: orders-ingester}
+                """.formatted(nodePort, KAFKA_PORT, REGION, ENDPOINT, REGION, ENDPOINT, HEADERS_URL, headersPassword);
+    }
+
+    private static boolean tableOfTheHeadersExists() throws Exception {
+        try (Connection connection = DriverManager.getConnection(HEADERS_URL, "spool", HEADERS_PASSWORD);
+             PreparedStatement query = connection.prepareStatement("SELECT to_regclass(?) IS NOT NULL")) {
+            query.setString(1, "envelope_headers");
+            try (ResultSet result = query.executeQuery()) {
+                return result.next() && result.getBoolean(1);
+            }
+        }
     }
 
     private static String[] withOwnContainers(String... arguments) {
